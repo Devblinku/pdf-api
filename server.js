@@ -2,15 +2,58 @@ const express = require('express');
 const puppeteer = require('puppeteer');
 const markdownIt = require('markdown-it');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
+// Function to find Chrome executable
+const findChrome = () => {
+  const possiblePaths = [
+    '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux*/chrome',
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+  ];
+  
+  for (const chromePath of possiblePaths) {
+    if (chromePath && fs.existsSync(chromePath)) {
+      return chromePath;
+    }
+  }
+  
+  // Try to find it dynamically
+  const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
+  if (fs.existsSync(cacheDir)) {
+    try {
+      const chromeDir = fs.readdirSync(cacheDir).find(dir => dir.startsWith('chrome'));
+      if (chromeDir) {
+        const chromePath = path.join(cacheDir, chromeDir);
+        const linuxDir = fs.readdirSync(chromePath).find(dir => dir.startsWith('linux-'));
+        if (linuxDir) {
+          const chromeLinuxPath = path.join(chromePath, linuxDir);
+          const chromeExecutable = fs.readdirSync(chromeLinuxPath).find(dir => dir.startsWith('chrome-linux'));
+          if (chromeExecutable) {
+            return path.join(chromeLinuxPath, chromeExecutable, 'chrome');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error finding Chrome executable:', err);
+    }
+  }
+  
+  return undefined;
+};
+
 // Puppeteer configuration for server environments
 const getPuppeteerConfig = () => {
   if (process.env.NODE_ENV === 'production') {
+    const executablePath = findChrome();
+    console.log('Chrome executable path:', executablePath);
+    
     return {
+      executablePath,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -18,7 +61,11 @@ const getPuppeteerConfig = () => {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
       ],
       headless: 'new'
     };
