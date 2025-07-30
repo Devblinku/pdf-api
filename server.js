@@ -165,22 +165,32 @@ console.log(`Puppeteer executable: ${process.env.PUPPETEER_EXECUTABLE_PATH || '/
 // Add startup delay to ensure all dependencies are ready
 const startServer = async () => {
   try {
-    // Test Puppeteer before starting server
-    console.log('Testing Puppeteer...');
-    const browser = await puppeteer.launch(getPuppeteerConfig());
-    await browser.close();
-    console.log('✅ Puppeteer test successful');
+    console.log('Skipping Puppeteer test during startup for faster boot...');
     
-    // Start server
+    // Start server immediately
     const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ PDF API running on port ${PORT}`);
       console.log(`✅ Server is ready to accept connections`);
+      console.log(`✅ Health check available at: http://0.0.0.0:${PORT}/health`);
     });
 
     server.on('error', (err) => {
       console.error('❌ Failed to start server:', err);
       process.exit(1);
     });
+
+    // Test Puppeteer after server starts (async)
+    setTimeout(async () => {
+      try {
+        console.log('Testing Puppeteer in background...');
+        const browser = await puppeteer.launch(getPuppeteerConfig());
+        await browser.close();
+        console.log('✅ Puppeteer test successful');
+      } catch (err) {
+        console.error('⚠️  Puppeteer test failed:', err.message);
+        console.error('PDF generation may not work properly');
+      }
+    }, 2000);
 
     // Graceful shutdown
     process.on('SIGTERM', () => {
@@ -198,8 +208,7 @@ const startServer = async () => {
     });
 
   } catch (err) {
-    console.error('❌ Puppeteer test failed:', err);
-    console.error('This usually means Chrome/Chromium is not properly installed');
+    console.error('❌ Server startup failed:', err);
     process.exit(1);
   }
 };
