@@ -4,10 +4,16 @@ services:
     env: node
     buildCommand: |
       npm install
+      mkdir -p /opt/render/.cache/puppeteer
       npx puppeteer browsers install chrome
+      find /opt/render/.cache/puppeteer -name "chrome" -type f -executable
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
         value: "true"
+      - key: PUPPETEER_CACHE_DIR
+        value: "/opt/render/.cache/puppeteer"
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: "/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux*/chrome"
