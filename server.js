@@ -1,5 +1,5 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const PDFDocument = require('pdfkit');
 const markdownIt = require('markdown-it');
 const cors = require('cors');
 
@@ -7,36 +7,107 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// Puppeteer configuration for Cloud Run
-const getPuppeteerConfig = () => ({
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--no-first-run',
-    '--no-zygote',
-    '--single-process',
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
-    '--disable-web-security',
-    '--disable-features=TranslateUI',
-    '--disable-default-apps',
-    '--disable-extensions',
-    '--hide-scrollbars',
-    '--mute-audio',
-    '--disable-background-networking',
-    '--disable-sync',
-    '--disable-translate',
-    '--disable-ipc-flooding-protection',
-  ],
-  headless: 'new',
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-});
+// Convert markdown to plain text with basic formatting
+function markdownToPDF(doc, markdown) {
+  const md = markdownIt();
+  const tokens = md.parse(markdown, {});
+  
+  let currentY = doc.y;
+  
+  tokens.forEach(token => {
+    switch (token.type) {
+      case 'heading_open':
+        const level = parseInt(token.tag.slice(1));
+        const fontSize = Math.max(24 - (level * 2), 12);
+        doc.fontSize(fontSize).font('Helvetica-Bold');
+        currentY += 10;
+        break;
+        
+      case 'heading_close':
+        currentY += 10;
+        doc.font('Helvetica').fontSize(12);
+        break;
+        
+      case 'paragraph_open':
+        currentY += 5;
+        break;
+        
+      case 'paragraph_close':
+        currentY += 10;
+        break;
+        
+      case 'inline':
+        if (token.content) {
+          // Handle inline formatting
+          let text = token.content;
+          
+          // Bold text **text**
+          text = text.replace(/\*\*(.*?)\*\*/g, (match, content) => {
+            doc.font('Helvetica-Bold').text(content, { continued: true });
+            doc.font('Helvetica');
+            return '';
+          });
+          
+          // Italic text *text*
+          text = text.replace(/\*(.*?)\*/g, (match, content) => {
+            doc.font('Helvetica-Oblique').text(content, { continued: true });
+            doc.font('Helvetica');
+            return '';
+          });
+          
+          // Code `code`
+          text = text.replace(/`(.*?)`/g, (match, content) => {
+            doc.font('Courier').text(content, { continued: true });
+            doc.font('Helvetica');
+            return '';
+          });
+          
+          if (text.trim()) {
+            doc.text(text);
+          }
+        }
+        break;
+        
+      case 'code_block':
+      case 'fence':
+        if (token.content) {
+          currentY += 10;
+          doc.rect(doc.x - 10, doc.y - 5, 500, token.content.split('\n').length * 15 + 10)
+             .fill('#f4f4f4')
+             .stroke('#ddd');
+          doc.fillColor('#000')
+             .font('Courier')
+             .fontSize(10)
+             .text(token.content, doc.x, doc.y);
+          doc.font('Helvetica').fontSize(12);
+          currentY += 15;
+        }
+        break;
+        
+      case 'bullet_list_open':
+        currentY += 5;
+        break;
+        
+      case 'list_item_open':
+        doc.text('• ', { continued: true, indent: 20 });
+        break;
+        
+      case 'list_item_close':
+        currentY += 5;
+        break;
+        
+      case 'hr':
+        currentY += 10;
+        doc.moveTo(50, doc.y)
+           .lineTo(550, doc.y)
+           .stroke('#ccc');
+        currentY += 10;
+        break;
+    }
+  });
+}
 
 app.post('/generate-pdf', async (req, res) => {
-  let browser;
   try {
     let { markdown, filename = 'generated.pdf' } = req.body;
 
@@ -47,88 +118,49 @@ app.post('/generate-pdf', async (req, res) => {
     // Strip frontmatter if present
     markdown = markdown.replace(/^---[\s\S]*?---\s*/, '');
 
-    const md = markdownIt({ html: true, linkify: true, typographer: true });
-    const html = `
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              padding: 40px;
-              max-width: 800px;
-              margin: auto;
-              line-height: 1.6;
-            }
-            h1, h2, h3, h4, h5, h6 {
-              margin-top: 24px;
-              margin-bottom: 12px;
-            }
-            p {
-              margin-bottom: 12px;
-            }
-            pre {
-              background: #f4f4f4;
-              padding: 12px;
-              border-radius: 4px;
-              overflow-x: auto;
-            }
-            code {
-              background: #f4f4f4;
-              padding: 2px 6px;
-              border-radius: 3px;
-            }
-          </style>
-        </head>
-        <body>
-          ${md.render(markdown)}
-        </body>
-      </html>
-    `;
+    console.log('Generating PDF with PDFKit...');
 
-    console.log('Launching browser...');
-    browser = await puppeteer.launch(getPuppeteerConfig());
-    
-    console.log('Creating new page...');
-    const page = await browser.newPage();
-    
-    // Set longer timeout for Cloud Run
-    page.setDefaultTimeout(30000);
-    
-    console.log('Setting content...');
-    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-    console.log('Generating PDF...');
-    const buffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
-      timeout: 30000
+    // Create a new PDF document
+    const doc = new PDFDocument({
+      margin: 50,
+      size: 'A4'
     });
 
-    await browser.close();
-    console.log('PDF generated successfully');
+    // Collect PDF data
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      
+      console.log('PDF generated successfully');
 
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Length': buffer.length
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': buffer.length
+      });
+
+      res.send(buffer);
     });
 
-    res.send(buffer);
+    // Add title
+    doc.fontSize(20)
+       .font('Helvetica-Bold')
+       .text('Generated Document', { align: 'center' });
+    
+    doc.moveDown(2);
+
+    // Convert markdown to PDF
+    markdownToPDF(doc, markdown);
+
+    // Finalize the PDF
+    doc.end();
+
   } catch (err) {
     console.error('Error generating PDF:', err);
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (closeErr) {
-        console.error('Error closing browser:', closeErr);
-      }
-    }
     res.status(500).json({ 
       error: 'Failed to generate PDF', 
-      message: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      message: err.message
     });
   }
 });
@@ -145,7 +177,7 @@ app.get('/health', (req, res) => {
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'PDF Generation API',
+    message: 'PDF Generation API with PDFKit',
     status: 'running',
     port: PORT,
     endpoints: {
@@ -157,60 +189,29 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 
-console.log(`Starting PDF API server...`);
-console.log(`Port: ${PORT}`);
-console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-console.log(`Puppeteer executable: ${process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'}`);
+console.log(`Starting PDF API server with PDFKit on port ${PORT}...`);
 
-// Add startup delay to ensure all dependencies are ready
-const startServer = async () => {
-  try {
-    console.log('Skipping Puppeteer test during startup for faster boot...');
-    
-    // Start server immediately
-    const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`✅ PDF API running on port ${PORT}`);
-      console.log(`✅ Server is ready to accept connections`);
-      console.log(`✅ Health check available at: http://0.0.0.0:${PORT}/health`);
-    });
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ PDF API running on port ${PORT}`);
+  console.log(`✅ Server is ready to accept connections`);
+});
 
-    server.on('error', (err) => {
-      console.error('❌ Failed to start server:', err);
-      process.exit(1);
-    });
+server.on('error', (err) => {
+  console.error('❌ Failed to start server:', err);
+  process.exit(1);
+});
 
-    // Test Puppeteer after server starts (async)
-    setTimeout(async () => {
-      try {
-        console.log('Testing Puppeteer in background...');
-        const browser = await puppeteer.launch(getPuppeteerConfig());
-        await browser.close();
-        console.log('✅ Puppeteer test successful');
-      } catch (err) {
-        console.error('⚠️  Puppeteer test failed:', err.message);
-        console.error('PDF generation may not work properly');
-      }
-    }, 2000);
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
+});
 
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      console.log('SIGTERM received, shutting down gracefully');
-      server.close(() => {
-        console.log('Process terminated');
-      });
-    });
-
-    process.on('SIGINT', () => {
-      console.log('SIGINT received, shutting down gracefully');
-      server.close(() => {
-        console.log('Process terminated');
-      });
-    });
-
-  } catch (err) {
-    console.error('❌ Server startup failed:', err);
-    process.exit(1);
-  }
-};
-
-startServer();
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
+});
