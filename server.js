@@ -3,28 +3,27 @@ const puppeteer = require('puppeteer');
 const markdownIt = require('markdown-it');
 const cors = require('cors');
 
+// Ensure Puppeteer uses its own bundled Chromium
+process.env.CHROME_BIN = require('puppeteer').executablePath();
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// Simplified Puppeteer configuration for Google Cloud Run
-const getPuppeteerConfig = () => {
-  if (process.env.NODE_ENV === 'production') {
-    return {
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-background-timer-throttling'
-      ],
-      headless: 'new'
-    };
-  }
-  return { args: ['--no-sandbox'] };
-};
+// Puppeteer configuration using bundled Chromium
+const getPuppeteerConfig = () => ({
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-zygote',
+    '--single-process',
+  ],
+  headless: 'new',
+  executablePath: process.env.CHROME_BIN || undefined,
+});
 
 app.post('/generate-pdf', async (req, res) => {
   let browser;
