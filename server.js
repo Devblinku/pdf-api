@@ -121,12 +121,19 @@ app.post('/generate-pdf', async (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 app.get('/', (req, res) => {
   res.json({ 
     message: 'PDF Generation API',
+    status: 'running',
+    port: PORT,
     endpoints: {
       'POST /generate-pdf': 'Generate PDF from markdown',
       'GET /health': 'Health check'
@@ -136,10 +143,17 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 
+console.log(`Starting PDF API server...`);
+console.log(`Port: ${PORT}`);
+console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
 // Add error handling for server startup
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`PDF API running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`✅ PDF API running on port ${PORT}`);
+  console.log(`✅ Server is ready to accept connections`);
+}).on('error', (err) => {
+  console.error('❌ Failed to start server:', err);
+  process.exit(1);
 });
 
 // Graceful shutdown
