@@ -40,8 +40,13 @@ RUN apt-get update && apt-get install -y \
     lsb-release \
     wget \
     xdg-utils \
+    chromium \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Set Puppeteer to use installed Chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
@@ -54,8 +59,17 @@ RUN npm install
 # Copy source code
 COPY . .
 
+# Create a non-root user
+RUN groupadd -r pptruser && useradd -r -g pptruser -G audio,video pptruser \
+    && mkdir -p /home/pptruser/Downloads \
+    && chown -R pptruser:pptruser /home/pptruser \
+    && chown -R pptruser:pptruser /app
+
+# Switch to non-root user
+USER pptruser
+
 # Expose port
 EXPOSE 8080
 
 # Start the application
-CMD ["node", "server.js"] 
+CMD ["node", "server.js"]

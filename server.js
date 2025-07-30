@@ -3,14 +3,11 @@ const puppeteer = require('puppeteer');
 const markdownIt = require('markdown-it');
 const cors = require('cors');
 
-// Ensure Puppeteer uses its own bundled Chromium
-process.env.CHROME_BIN = require('puppeteer').executablePath();
-
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// Puppeteer configuration using bundled Chromium
+// Puppeteer configuration for Cloud Run
 const getPuppeteerConfig = () => ({
   args: [
     '--no-sandbox',
@@ -20,9 +17,22 @@ const getPuppeteerConfig = () => ({
     '--no-first-run',
     '--no-zygote',
     '--single-process',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-web-security',
+    '--disable-features=TranslateUI',
+    '--disable-default-apps',
+    '--disable-extensions',
+    '--hide-scrollbars',
+    '--mute-audio',
+    '--disable-background-networking',
+    '--disable-sync',
+    '--disable-translate',
+    '--disable-ipc-flooding-protection',
   ],
   headless: 'new',
-  executablePath: process.env.CHROME_BIN || undefined,
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
 });
 
 app.post('/generate-pdf', async (req, res) => {
@@ -82,14 +92,18 @@ app.post('/generate-pdf', async (req, res) => {
     console.log('Creating new page...');
     const page = await browser.newPage();
     
+    // Set longer timeout for Cloud Run
+    page.setDefaultTimeout(30000);
+    
     console.log('Setting content...');
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     console.log('Generating PDF...');
     const buffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' }
+      margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
+      timeout: 30000
     });
 
     await browser.close();
@@ -146,27 +160,48 @@ const PORT = process.env.PORT || 8080;
 console.log(`Starting PDF API server...`);
 console.log(`Port: ${PORT}`);
 console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`Puppeteer executable: ${process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'}`);
 
-// Add error handling for server startup
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ PDF API running on port ${PORT}`);
-  console.log(`✅ Server is ready to accept connections`);
-}).on('error', (err) => {
-  console.error('❌ Failed to start server:', err);
-  process.exit(1);
-});
+// Add startup delay to ensure all dependencies are ready
+const startServer = async () => {
+  try {
+    // Test Puppeteer before starting server
+    console.log('Testing Puppeteer...');
+    const browser = await puppeteer.launch(getPuppeteerConfig());
+    await browser.close();
+    console.log('✅ Puppeteer test successful');
+    
+    // Start server
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ PDF API running on port ${PORT}`);
+      console.log(`✅ Server is ready to accept connections`);
+    });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
+    server.on('error', (err) => {
+      console.error('❌ Failed to start server:', err);
+      process.exit(1);
+    });
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, shutting down gracefully');
+      server.close(() => {
+        console.log('Process terminated');
+      });
+    });
+
+    process.on('SIGINT', () => {
+      console.log('SIGINT received, shutting down gracefully');
+      server.close(() => {
+        console.log('Process terminated');
+      });
+    });
+
+  } catch (err) {
+    console.error('❌ Puppeteer test failed:', err);
+    console.error('This usually means Chrome/Chromium is not properly installed');
+    process.exit(1);
+  }
+};
+
+startServer();
