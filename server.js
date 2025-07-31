@@ -32,6 +32,8 @@ const getPlaywrightConfig = () => ({
     '--disable-ipc-flooding-protection',
   ],
   headless: true,
+  // Use system Chromium if available, otherwise use Playwright's bundled version
+  executablePath: process.env.CHROME_BIN || undefined,
 });
 
 app.post('/generate-pdf', async (req, res) => {
@@ -161,7 +163,19 @@ app.post('/generate-pdf', async (req, res) => {
     `;
 
     console.log('Launching browser...');
-    browser = await chromium.launch(getPlaywrightConfig());
+    
+    // Try with default config first
+    try {
+      browser = await chromium.launch(getPlaywrightConfig());
+      console.log('Browser launched successfully with default config');
+    } catch (err) {
+      console.log('Default config failed, trying without executablePath...');
+      browser = await chromium.launch({
+        ...getPlaywrightConfig(),
+        executablePath: undefined
+      });
+      console.log('Browser launched successfully without executablePath');
+    }
     
     console.log('Creating new page...');
     const page = await browser.newPage();
@@ -234,6 +248,8 @@ const PORT = process.env.PORT || 8080;
 console.log(`Starting PDF API server...`);
 console.log(`Port: ${PORT}`);
 console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`Playwright browsers path: ${process.env.PLAYWRIGHT_BROWSERS_PATH || 'default'}`);
+console.log(`Chrome executable: ${process.env.CHROME_BIN || 'Playwright bundled'}`);
 
 // Add startup delay to ensure all dependencies are ready
 const startServer = async () => {
@@ -241,8 +257,21 @@ const startServer = async () => {
     // Test Playwright before starting server
     console.log('Testing Playwright...');
     console.log('Launching browser for test...');
-    const browser = await chromium.launch(getPlaywrightConfig());
-    console.log('Browser launched successfully');
+    
+    // Try with default config first
+    let browser;
+    try {
+      browser = await chromium.launch(getPlaywrightConfig());
+      console.log('Browser launched successfully with default config');
+    } catch (err) {
+      console.log('Default config failed, trying without executablePath...');
+      browser = await chromium.launch({
+        ...getPlaywrightConfig(),
+        executablePath: undefined
+      });
+      console.log('Browser launched successfully without executablePath');
+    }
+    
     await browser.close();
     console.log('✅ Playwright test successful');
     
