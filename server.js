@@ -240,11 +240,14 @@ const startServer = async () => {
   try {
     // Test Playwright before starting server
     console.log('Testing Playwright...');
+    console.log('Launching browser for test...');
     const browser = await chromium.launch(getPlaywrightConfig());
+    console.log('Browser launched successfully');
     await browser.close();
     console.log('✅ Playwright test successful');
     
     // Start server
+    console.log('Starting Express server...');
     const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ PDF API running on port ${PORT}`);
       console.log(`✅ Server is ready to accept connections`);
@@ -272,6 +275,7 @@ const startServer = async () => {
 
   } catch (err) {
     console.error('❌ Playwright test failed:', err);
+    console.error('Error details:', err.message);
     console.error('This usually means Chromium is not properly installed');
     process.exit(1);
   }

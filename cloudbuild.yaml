@@ -34,7 +34,7 @@ steps:
       - '--port'
       - '8080'
       - '--set-env-vars'
-      - 'NODE_ENV=production,PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true,PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium'
+      - 'NODE_ENV=production'
 
 substitutions:
   _SERVICE_NAME: pdf-generator
