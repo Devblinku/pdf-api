@@ -1,5 +1,5 @@
 const express = require('express');
-const PDFDocument = require('pdfkit');
+const { chromium } = require('playwright');
 const markdownIt = require('markdown-it');
 const cors = require('cors');
 
@@ -7,107 +7,35 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// Convert markdown to plain text with basic formatting
-function markdownToPDF(doc, markdown) {
-  const md = markdownIt();
-  const tokens = md.parse(markdown, {});
-  
-  let currentY = doc.y;
-  
-  tokens.forEach(token => {
-    switch (token.type) {
-      case 'heading_open':
-        const level = parseInt(token.tag.slice(1));
-        const fontSize = Math.max(24 - (level * 2), 12);
-        doc.fontSize(fontSize).font('Helvetica-Bold');
-        currentY += 10;
-        break;
-        
-      case 'heading_close':
-        currentY += 10;
-        doc.font('Helvetica').fontSize(12);
-        break;
-        
-      case 'paragraph_open':
-        currentY += 5;
-        break;
-        
-      case 'paragraph_close':
-        currentY += 10;
-        break;
-        
-      case 'inline':
-        if (token.content) {
-          // Handle inline formatting
-          let text = token.content;
-          
-          // Bold text **text**
-          text = text.replace(/\*\*(.*?)\*\*/g, (match, content) => {
-            doc.font('Helvetica-Bold').text(content, { continued: true });
-            doc.font('Helvetica');
-            return '';
-          });
-          
-          // Italic text *text*
-          text = text.replace(/\*(.*?)\*/g, (match, content) => {
-            doc.font('Helvetica-Oblique').text(content, { continued: true });
-            doc.font('Helvetica');
-            return '';
-          });
-          
-          // Code `code`
-          text = text.replace(/`(.*?)`/g, (match, content) => {
-            doc.font('Courier').text(content, { continued: true });
-            doc.font('Helvetica');
-            return '';
-          });
-          
-          if (text.trim()) {
-            doc.text(text);
-          }
-        }
-        break;
-        
-      case 'code_block':
-      case 'fence':
-        if (token.content) {
-          currentY += 10;
-          doc.rect(doc.x - 10, doc.y - 5, 500, token.content.split('\n').length * 15 + 10)
-             .fill('#f4f4f4')
-             .stroke('#ddd');
-          doc.fillColor('#000')
-             .font('Courier')
-             .fontSize(10)
-             .text(token.content, doc.x, doc.y);
-          doc.font('Helvetica').fontSize(12);
-          currentY += 15;
-        }
-        break;
-        
-      case 'bullet_list_open':
-        currentY += 5;
-        break;
-        
-      case 'list_item_open':
-        doc.text('• ', { continued: true, indent: 20 });
-        break;
-        
-      case 'list_item_close':
-        currentY += 5;
-        break;
-        
-      case 'hr':
-        currentY += 10;
-        doc.moveTo(50, doc.y)
-           .lineTo(550, doc.y)
-           .stroke('#ccc');
-        currentY += 10;
-        break;
-    }
-  });
-}
+// Playwright configuration for Cloud Run
+const getPlaywrightConfig = () => ({
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-zygote',
+    '--single-process',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-web-security',
+    '--disable-features=TranslateUI',
+    '--disable-default-apps',
+    '--disable-extensions',
+    '--hide-scrollbars',
+    '--mute-audio',
+    '--disable-background-networking',
+    '--disable-sync',
+    '--disable-translate',
+    '--disable-ipc-flooding-protection',
+  ],
+  headless: true,
+});
 
 app.post('/generate-pdf', async (req, res) => {
+  let browser;
   try {
     let { markdown, filename = 'generated.pdf' } = req.body;
 
@@ -116,53 +44,165 @@ app.post('/generate-pdf', async (req, res) => {
     }
 
     // Strip frontmatter if present
-    if (/^---\n/.test(markdown)) {
-        markdown = markdown.replace(/^---[\s\S]*?---\s*/, '');
-      }
-      
-    console.log('Generating PDF with PDFKit...');
+    markdown = markdown.replace(/^---[\s\S]*?---\s*/, '');
 
-    // Create a new PDF document
-    const doc = new PDFDocument({
-      margin: 50,
-      size: 'A4'
+    const md = markdownIt({ 
+      html: true, 
+      linkify: true, 
+      typographer: true,
+      breaks: true
     });
-
-    // Collect PDF data
-    const chunks = [];
-    doc.on('data', chunk => chunks.push(chunk));
-    doc.on('end', () => {
-      const buffer = Buffer.concat(chunks);
-      
-      console.log('PDF generated successfully');
-
-      res.set({
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Content-Length': buffer.length
-      });
-
-      res.send(buffer);
-    });
-
-    // Add title
-    doc.fontSize(20)
-       .font('Helvetica-Bold')
-       .text('Generated Document', { align: 'center' });
     
-    doc.moveDown(2);
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Generated PDF</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+              padding: 40px;
+              max-width: 800px;
+              margin: auto;
+              line-height: 1.6;
+              color: #333;
+              background: white;
+            }
+            h1, h2, h3, h4, h5, h6 {
+              margin-top: 24px;
+              margin-bottom: 12px;
+              color: #2c3e50;
+              font-weight: 600;
+            }
+            h1 { font-size: 2em; border-bottom: 2px solid #eee; padding-bottom: 8px; }
+            h2 { font-size: 1.5em; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+            h3 { font-size: 1.25em; }
+            h4 { font-size: 1.1em; }
+            p {
+              margin-bottom: 12px;
+            }
+            pre {
+              background: #f8f9fa;
+              padding: 16px;
+              border-radius: 6px;
+              overflow-x: auto;
+              border: 1px solid #e9ecef;
+              margin: 16px 0;
+            }
+            code {
+              background: #f8f9fa;
+              padding: 2px 6px;
+              border-radius: 3px;
+              font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+              font-size: 0.9em;
+            }
+            pre code {
+              background: none;
+              padding: 0;
+              border-radius: 0;
+            }
+            blockquote {
+              border-left: 4px solid #ddd;
+              margin: 16px 0;
+              padding-left: 16px;
+              color: #666;
+            }
+            table {
+              border-collapse: collapse;
+              width: 100%;
+              margin: 16px 0;
+            }
+            th, td {
+              border: 1px solid #ddd;
+              padding: 8px 12px;
+              text-align: left;
+            }
+            th {
+              background-color: #f8f9fa;
+              font-weight: 600;
+            }
+            ul, ol {
+              margin: 16px 0;
+              padding-left: 24px;
+            }
+            li {
+              margin: 4px 0;
+            }
+            a {
+              color: #007bff;
+              text-decoration: none;
+            }
+            a:hover {
+              text-decoration: underline;
+            }
+            hr {
+              border: none;
+              border-top: 1px solid #eee;
+              margin: 24px 0;
+            }
+            img {
+              max-width: 100%;
+              height: auto;
+              border-radius: 4px;
+            }
+            .highlight {
+              background: #fff3cd;
+              padding: 2px 4px;
+              border-radius: 3px;
+            }
+          </style>
+        </head>
+        <body>
+          ${md.render(markdown)}
+        </body>
+      </html>
+    `;
 
-    // Convert markdown to PDF
-    markdownToPDF(doc, markdown);
+    console.log('Launching browser...');
+    browser = await chromium.launch(getPlaywrightConfig());
+    
+    console.log('Creating new page...');
+    const page = await browser.newPage();
+    
+    // Set longer timeout for Cloud Run
+    page.setDefaultTimeout(30000);
+    
+    console.log('Setting content...');
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Finalize the PDF
-    doc.end();
+    console.log('Generating PDF...');
+    const buffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
+      preferCSSPageSize: true
+    });
 
+    await browser.close();
+    console.log('PDF generated successfully');
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length
+    });
+
+    res.send(buffer);
   } catch (err) {
     console.error('Error generating PDF:', err);
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (closeErr) {
+        console.error('Error closing browser:', closeErr);
+      }
+    }
     res.status(500).json({ 
       error: 'Failed to generate PDF', 
-      message: err.message
+      message: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });
@@ -179,7 +219,7 @@ app.get('/health', (req, res) => {
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'PDF Generation API with PDFKit',
+    message: 'PDF Generation API',
     status: 'running',
     port: PORT,
     endpoints: {
@@ -191,29 +231,50 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 
-console.log(`Starting PDF API server with PDFKit on port ${PORT}...`);
+console.log(`Starting PDF API server...`);
+console.log(`Port: ${PORT}`);
+console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ PDF API running on port ${PORT}`);
-  console.log(`✅ Server is ready to accept connections`);
-});
+// Add startup delay to ensure all dependencies are ready
+const startServer = async () => {
+  try {
+    // Test Playwright before starting server
+    console.log('Testing Playwright...');
+    const browser = await chromium.launch(getPlaywrightConfig());
+    await browser.close();
+    console.log('✅ Playwright test successful');
+    
+    // Start server
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ PDF API running on port ${PORT}`);
+      console.log(`✅ Server is ready to accept connections`);
+    });
 
-server.on('error', (err) => {
-  console.error('❌ Failed to start server:', err);
-  process.exit(1);
-});
+    server.on('error', (err) => {
+      console.error('❌ Failed to start server:', err);
+      process.exit(1);
+    });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, shutting down gracefully');
+      server.close(() => {
+        console.log('Process terminated');
+      });
+    });
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
+    process.on('SIGINT', () => {
+      console.log('SIGINT received, shutting down gracefully');
+      server.close(() => {
+        console.log('Process terminated');
+      });
+    });
+
+  } catch (err) {
+    console.error('❌ Playwright test failed:', err);
+    console.error('This usually means Chromium is not properly installed');
+    process.exit(1);
+  }
+};
+
+startServer();
