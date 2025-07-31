@@ -116,8 +116,10 @@ app.post('/generate-pdf', async (req, res) => {
     }
 
     // Strip frontmatter if present
-    markdown = markdown.replace(/^---[\s\S]*?---\s*/, '');
-
+    if (/^---\n/.test(markdown)) {
+        markdown = markdown.replace(/^---[\s\S]*?---\s*/, '');
+      }
+      
     console.log('Generating PDF with PDFKit...');
 
     // Create a new PDF document
