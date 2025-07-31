@@ -48,10 +48,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies and Playwright browsers
-RUN npm ci --only=production --no-audit --no-fund && \
-    npx playwright install chromium && \
-    npx playwright install-deps chromium
+# Install dependencies
+RUN npm ci --only=production --no-audit --no-fund
 
 # Set Playwright environment variables
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
@@ -65,7 +63,11 @@ RUN groupadd -r nodejs && useradd -r -g nodejs nodejs && \
     chown -R nodejs:nodejs /app && \
     mkdir -p /app/.cache && \
     chown -R nodejs:nodejs /app/.cache
+
+# Switch to non-root user and install browsers
 USER nodejs
+RUN npx playwright install chromium && \
+    npx playwright install-deps chromium
 
 EXPOSE 8080
 
