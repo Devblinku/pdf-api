@@ -64,10 +64,12 @@ RUN groupadd -r nodejs && useradd -r -g nodejs nodejs && \
     mkdir -p /app/.cache && \
     chown -R nodejs:nodejs /app/.cache
 
-# Switch to non-root user and install browsers
-USER nodejs
+# Install Playwright browsers and dependencies as root
 RUN npx playwright install chromium && \
     npx playwright install-deps chromium
+
+# Switch to non-root user
+USER nodejs
 
 EXPOSE 8080
 
